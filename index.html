@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>URL Batch Splitter</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
+
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: { sans:['Syne','sans-serif'], mono:['DM Mono','monospace'] }
+    }
+  }
+}
+</script>
+
+<style>
+  body { background:#060912; }
+
+  .glass {
+    background:rgba(15,23,42,0.75);
+    backdrop-filter:blur(18px);
+    border:1px solid rgba(45,212,191,0.13);
+  }
+  .bg-grid {
+    background-image:
+      linear-gradient(rgba(45,212,191,0.035) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(45,212,191,0.035) 1px,transparent 1px);
+    background-size:40px 40px;
+  }
+  .orb { position:fixed; border-radius:50%; filter:blur(90px); pointer-events:none; z-index:0; }
+
+  textarea,input[type="number"],input[type="text"] {
+    outline:none; transition:border-color .2s, box-shadow .2s;
+  }
+  textarea:focus,input[type="number"]:focus,input[type="text"]:focus {
+    border-color:rgba(45,212,191,0.5)!important;
+    box-shadow:0 0 0 3px rgba(45,212,191,0.07);
+  }
+
+  .btn-main {
+    background:linear-gradient(135deg,#14b8a6,#0891b2);
+    box-shadow:0 4px 24px rgba(20,184,166,0.38);
+    transition:all .2s;
+  }
+  .btn-main:hover:not(:disabled) { box-shadow:0 6px 32px rgba(20,184,166,0.55); transform:translateY(-1px); }
+  .btn-main:disabled { opacity:.42; cursor:not-allowed; transform:none!important; }
+
+  .btn-sec {
+    background:rgba(45,212,191,0.07);
+    border:1px solid rgba(45,212,191,0.2);
+    transition:all .2s;
+  }
+  .btn-sec:hover { background:rgba(45,212,191,0.13); border-color:rgba(45,212,191,0.36); }
+
+  .drop-zone { border:2px dashed rgba(45,212,191,0.2); transition:all .2s; cursor:pointer; }
+  .drop-zone:hover,.drop-zone.dragover { border-color:rgba(45,212,191,0.5); background:rgba(45,212,191,0.04); }
+  .drop-zone.loaded { border-color:rgba(45,212,191,0.4); border-style:solid; background:rgba(45,212,191,0.05); }
+
+  .progress-track { background:rgba(45,212,191,0.1); border-radius:999px; overflow:hidden; height:5px; }
+  .progress-fill {
+    height:100%;
+    background:linear-gradient(90deg,#14b8a6,#0891b2,#14b8a6);
+    background-size:200% 100%;
+    border-radius:999px;
+    transition:width .35s cubic-bezier(.4,0,.2,1);
+    animation:shimmer 2s linear infinite;
+  }
+
+  @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+  @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+  @keyframes slideUp { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+
+  .animate-fade-in { animation:fadeIn .35s ease forwards; }
+  .animate-slide-up { animation:slideUp .35s ease forwards; }
+
+  .stat-card { background:rgba(45,212,191,0.04); border:1px solid rgba(45,212,191,0.12); border-radius:12px; }
+
+  .badge-file {
+    background:rgba(45,212,191,0.1); color:#2dd4bf;
+    border:1px solid rgba(45,212,191,0.2);
+    font-family:'DM Mono',monospace; font-size:11px;
+    padding:2px 9px; border-radius:6px; white-space:nowrap;
+  }
+
+  .trow:nth-child(even) { background:rgba(45,212,191,0.02); }
+  .trow:hover { background:rgba(45,212,191,0.06); }
+
+  .url-pill {
+    background:rgba(45,212,191,0.11); color:#2dd4bf;
+    border-radius:999px; padding:2px 10px;
+    font-size:12px; font-family:'DM Mono',monospace;
+  }
+
+  .toast {
+    position:fixed; bottom:24px; left:50%;
+    transform:translateX(-50%) translateY(14px);
+    z-index:9999; opacity:0; pointer-events:none;
+    transition:all .3s cubic-bezier(.4,0,.2,1); white-space:nowrap;
+  }
+  .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+  .slabel {
+    font-size:10px; font-weight:600; letter-spacing:.12em;
+    text-transform:uppercase; color:rgba(45,212,191,0.65);
+    margin-bottom:8px; display:block;
+  }
+
+  ::-webkit-scrollbar { width:5px; }
+  ::-webkit-scrollbar-track { background:rgba(255,255,255,0.02); }
+  ::-webkit-scrollbar-thumb { background:rgba(45,212,191,0.2); border-radius:3px; }
+</style>
+</head>
+<body class="bg-grid min-h-screen font-sans text-slate-200">
+
+<div class="orb w-[480px] h-[480px] bg-teal-500 opacity-[0.04] top-[-12%] left-[-10%]"></div>
+<div class="orb w-80 h-80 bg-blue-500 opacity-[0.04] bottom-[8%] right-[-6%]"></div>
+
+<div class="relative z-10 max-w-3xl mx-auto px-4 py-12">
+
+  <!-- Header -->
+  <div class="mb-9 animate-fade-in">
+    <div class="flex items-center gap-3 mb-3">
+      <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 flex items-center justify-center text-2xl shadow-lg" style="box-shadow:0 4px 20px rgba(20,184,166,0.35)">🔗</div>
+      <div>
+        <h1 class="text-[22px] font-extrabold tracking-tight text-white leading-tight">URL Batch Splitter</h1>
+        <p class="text-slate-400 text-sm mt-0.5">Paste URLs · Fill template · Download split Excel files</p>
+      </div>
+    </div>
+    <div class="mt-4 flex flex-wrap gap-2.5">
+      <span class="flex items-center gap-1.5 text-xs text-slate-500 font-mono bg-slate-800/50 rounded-full px-3 py-1 border border-slate-700/50">
+        <span class="w-1.5 h-1.5 rounded-full bg-teal-400 shrink-0"></span>Category_review → Col A (row 2+)
+      </span>
+      <span class="flex items-center gap-1.5 text-xs text-slate-500 font-mono bg-slate-800/50 rounded-full px-3 py-1 border border-slate-700/50">
+        <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0"></span>Rawdata → Col A (row 1+)
+      </span>
+      <span class="flex items-center gap-1.5 text-xs text-slate-500 font-mono bg-slate-800/50 rounded-full px-3 py-1 border border-slate-700/50">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span>All colors &amp; styles preserved
+      </span>
+    </div>
+  </div>
+
+  <!-- Main Card -->
+  <div class="glass rounded-2xl p-6 mb-5 animate-slide-up" style="animation-delay:.04s">
+
+    <!-- Step 1 -->
+    <span class="slabel">Step 1 — Upload your Excel template (.xlsx)</span>
+    <div id="drop-zone" class="drop-zone rounded-xl p-5 flex items-center gap-4 mb-6" onclick="document.getElementById('tpl-input').click()">
+      <div id="drop-icon" class="w-10 h-10 rounded-lg bg-slate-800/80 flex items-center justify-center text-xl shrink-0">📄</div>
+      <div class="flex-1 min-w-0">
+        <p class="text-sm font-semibold text-slate-300 truncate" id="tpl-name">Click or drag &amp; drop your template_merge.xlsx</p>
+        <p class="text-xs text-slate-500 mt-0.5">Only Column A in Category_review &amp; Rawdata will change — all colors &amp; styles stay intact</p>
+      </div>
+      <span id="tpl-badge" class="hidden px-3 py-1 rounded-full bg-teal-500/10 text-teal-400 text-xs font-mono border border-teal-500/20 shrink-0">✓ Ready</span>
+    </div>
+    <input type="file" id="tpl-input" accept=".xlsx" class="hidden"/>
+
+    <!-- Step 2 -->
+    <div class="flex items-center justify-between mb-2">
+      <span class="slabel mb-0">Step 2 — Paste your URLs (one per line)</span>
+      <span id="url-pill" class="url-pill hidden">0 URLs</span>
+    </div>
+    <textarea id="urls"
+      class="w-full h-52 bg-slate-950/80 border border-slate-700/50 rounded-xl text-slate-300 font-mono text-xs p-4 resize-y leading-relaxed placeholder-slate-600"
+      placeholder="https://example.com/page-1&#10;https://another-site.com/article&#10;https://domain.org/path&#10;&#10;Supports 100,000+ URLs — one URL per line"></textarea>
+
+    <!-- Step 3 -->
+    <div class="grid grid-cols-2 gap-4 mt-5">
+      <div>
+        <span class="slabel">Step 3 — Batch size (URLs per file)</span>
+        <input type="number" id="batch-size" placeholder="e.g. 10000" min="1"
+          class="w-full bg-slate-950/80 border border-slate-700/50 rounded-xl px-4 py-3 text-slate-200 text-sm font-mono placeholder-slate-600"/>
+        <p class="text-xs text-slate-600 mt-2">Leave empty → single file with all URLs</p>
+      </div>
+      <div>
+        <span class="slabel">Filename prefix</span>
+        <input type="text" id="file-prefix" placeholder="output" value="output"
+          class="w-full bg-slate-950/80 border border-slate-700/50 rounded-xl px-4 py-3 text-slate-200 text-sm font-mono placeholder-slate-600"/>
+        <p class="text-xs text-slate-600 mt-2">Files: prefix_01_of_10.xlsx</p>
+      </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="flex gap-3 mt-6">
+      <button onclick="previewBatches()" class="btn-sec flex-1 rounded-xl py-3 text-sm font-semibold text-slate-300 flex items-center justify-center gap-2">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+        Preview Batches
+      </button>
+      <button id="gen-btn" onclick="generateFiles()" class="btn-main flex-[2] rounded-xl py-3 text-sm font-bold text-white flex items-center justify-center gap-2">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+        Generate &amp; Download
+      </button>
+    </div>
+
+    <!-- Progress -->
+    <div id="progress-wrap" class="mt-5 hidden">
+      <div class="progress-track"><div id="prog-fill" class="progress-fill" style="width:0%"></div></div>
+      <p id="prog-label" class="text-xs text-slate-500 mt-2 text-center font-mono"></p>
+    </div>
+  </div>
+
+  <!-- Preview Panel -->
+  <div id="preview-panel" class="hidden animate-slide-up">
+    <div class="glass rounded-2xl p-6">
+      <span class="slabel">Batch preview</span>
+      <div class="grid grid-cols-3 gap-3 mb-5">
+        <div class="stat-card p-4 text-center">
+          <div id="s-total" class="text-3xl font-extrabold text-teal-400 font-mono">0</div>
+          <div class="text-xs text-slate-500 mt-1 uppercase tracking-wider">Total URLs</div>
+        </div>
+        <div class="stat-card p-4 text-center">
+          <div id="s-files" class="text-3xl font-extrabold text-cyan-400 font-mono">0</div>
+          <div class="text-xs text-slate-500 mt-1 uppercase tracking-wider">Files</div>
+        </div>
+        <div class="stat-card p-4 text-center">
+          <div id="s-per" class="text-3xl font-extrabold text-slate-300 font-mono">—</div>
+          <div class="text-xs text-slate-500 mt-1 uppercase tracking-wider">Per File</div>
+        </div>
+      </div>
+      <div class="rounded-xl overflow-hidden border border-slate-700/40">
+        <div class="max-h-64 overflow-y-auto">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="bg-slate-800/60 border-b border-slate-700/40">
+                <th class="text-left px-4 py-3 text-slate-400 font-semibold uppercase tracking-wider text-[10px]">File</th>
+                <th class="text-left px-4 py-3 text-slate-400 font-semibold uppercase tracking-wider text-[10px]">URL Range</th>
+                <th class="text-right px-4 py-3 text-slate-400 font-semibold uppercase tracking-wider text-[10px]">Count</th>
+              </tr>
+            </thead>
+            <tbody id="preview-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast glass rounded-xl px-5 py-3 text-sm font-semibold"></div>
+
+<script>
+// ═══════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════
+let templateAB = null;
+
+// ═══════════════════════════════════════════════
+//  TEMPLATE UPLOAD
+// ═══════════════════════════════════════════════
+const dropZone = document.getElementById('drop-zone');
+document.getElementById('tpl-input').addEventListener('change', e => handleFile(e.target.files[0]));
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', ()=> dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if (f && f.name.endsWith('.xlsx')) handleFile(f);
+  else showToast('Please drop a .xlsx file', 'error');
+});
+
+function handleFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    templateAB = e.target.result;
+    document.getElementById('tpl-name').textContent = '✓  ' + file.name;
+    document.getElementById('tpl-badge').classList.remove('hidden');
+    document.getElementById('drop-icon').textContent = '✅';
+    dropZone.classList.add('loaded');
+    showToast('Template loaded: ' + file.name, 'success');
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ═══════════════════════════════════════════════
+//  URL COUNTER
+// ═══════════════════════════════════════════════
+document.getElementById('urls').addEventListener('input', function() {
+  const urls = parseURLs(this.value);
+  const pill = document.getElementById('url-pill');
+  if (urls.length) {
+    pill.textContent = urls.length.toLocaleString() + ' URL' + (urls.length !== 1 ? 's' : '');
+    pill.classList.remove('hidden');
+  } else { pill.classList.add('hidden'); }
+});
+
+// ═══════════════════════════════════════════════
+//  PREVIEW
+// ═══════════════════════════════════════════════
+function previewBatches() {
+  const urls = parseURLs(document.getElementById('urls').value);
+  if (!urls.length) { showToast('Paste at least one URL first', 'error'); return; }
+  const batchSize = parseInt(document.getElementById('batch-size').value) || 0;
+  const batches   = splitBatches(urls, batchSize);
+  const pad       = String(batches.length).length;
+
+  document.getElementById('s-total').textContent = urls.length.toLocaleString();
+  document.getElementById('s-files').textContent = batches.length.toLocaleString();
+  document.getElementById('s-per').textContent   = (batchSize || urls.length).toLocaleString();
+
+  const tbody = document.getElementById('preview-tbody');
+  tbody.innerHTML = '';
+  let cursor = 1;
+  batches.forEach((batch, i) => {
+    const end = cursor + batch.length - 1;
+    const tr = document.createElement('tr');
+    tr.className = 'trow border-b border-slate-700/20';
+    tr.innerHTML = `
+      <td class="px-4 py-2.5"><span class="badge-file">file_${String(i+1).padStart(pad,'0')}</span></td>
+      <td class="px-4 py-2.5 text-slate-400 font-mono">${cursor.toLocaleString()} → ${end.toLocaleString()}</td>
+      <td class="px-4 py-2.5 text-right text-teal-400 font-mono font-semibold">${batch.length.toLocaleString()}</td>`;
+    tbody.appendChild(tr);
+    cursor += batch.length;
+  });
+
+  const panel = document.getElementById('preview-panel');
+  panel.classList.remove('hidden');
+  panel.scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+
+// ═══════════════════════════════════════════════
+//  GENERATE
+// ═══════════════════════════════════════════════
+async function generateFiles() {
+  if (!templateAB) { showToast('Upload your Excel template first', 'error'); return; }
+  const urls = parseURLs(document.getElementById('urls').value);
+  if (!urls.length) { showToast('Paste at least one URL first', 'error'); return; }
+
+  const batchSize = parseInt(document.getElementById('batch-size').value) || 0;
+  const prefix    = (document.getElementById('file-prefix').value.trim() || 'output').replace(/[^a-zA-Z0-9_\-]/g,'_');
+  const batches   = splitBatches(urls, batchSize);
+  const pad       = String(batches.length).length;
+
+  const btn = document.getElementById('gen-btn');
+  btn.disabled = true;
+  btn.innerHTML = `<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Generating…`;
+
+  setProgress(5, 'Reading template ZIP…');
+
+  try {
+    if (batches.length === 1) {
+      setProgress(20, 'Injecting URLs into XML…');
+      const out = await fillTemplate(templateAB, batches[0]);
+      setProgress(95, 'Preparing download…');
+      await sleep(80);
+      downloadBlob(new Blob([out], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${prefix}_1.xlsx`);
+      setProgress(100, 'Done!');
+      showToast('✅ Downloaded ' + prefix + '_1.xlsx', 'success');
+    } else {
+      const zip = new JSZip();
+      for (let i = 0; i < batches.length; i++) {
+        const pct = 10 + Math.round((i / batches.length) * 82);
+        setProgress(pct, 'Building file ' + (i+1) + ' of ' + batches.length + '…');
+        await sleep(0);
+        const out   = await fillTemplate(templateAB, batches[i]);
+        const fname = prefix + '_' + String(i+1).padStart(pad,'0') + '_of_' + batches.length + '.xlsx';
+        zip.file(fname, out);
+      }
+      setProgress(94, 'Compressing ZIP…');
+      const zipBlob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{ level:5 } });
+      setProgress(100, 'Done!');
+      downloadBlob(zipBlob, prefix + '_' + batches.length + '_files.zip');
+      showToast('✅ Downloaded ZIP — ' + batches.length + ' files', 'success');
+    }
+  } catch(err) {
+    showToast('❌ ' + err.message, 'error');
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg> Generate &amp; Download`;
+    setTimeout(() => setProgress(0,''), 2800);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  CORE — fillTemplate
+//  ─────────────────────────────────────────────────────────────────
+//  Opens the .xlsx as a ZIP, reads the two target sheet XML files,
+//  surgically modifies ONLY the column-A cells using string ops,
+//  then repacks. Every other file in the ZIP is copied byte-for-byte.
+//  No SheetJS — no style stripping.
+// ═══════════════════════════════════════════════════════════════════
+async function fillTemplate(sourceAB, urls) {
+  const zip = await JSZip.loadAsync(sourceAB.slice(0)); // clone buffer
+
+  // Resolve sheet paths from workbook.xml + rels
+  const wbXml   = await zip.file('xl/workbook.xml').async('string');
+  const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+  const paths   = resolveSheetPaths(wbXml, relsXml, ['Category_review','Rawdata']);
+
+  // Category_review: URLs → col A starting at row 2
+  const crPath = 'xl/' + (paths['Category_review'] || 'worksheets/sheet1.xml');
+  zip.file(crPath, injectColumnA(await zip.file(crPath).async('string'), urls, 2));
+
+  // Rawdata: URLs → col A starting at row 1
+  const rdPath = 'xl/' + (paths['Rawdata'] || 'worksheets/sheet4.xml');
+  zip.file(rdPath, injectColumnA(await zip.file(rdPath).async('string'), urls, 1));
+
+  // Remove calcChain so Excel rebuilds formula order (safe, not needed)
+  zip.remove('xl/calcChain.xml');
+
+  return await zip.generateAsync({ type:'arraybuffer', compression:'DEFLATE', compressionOptions:{ level:5 } });
+}
+
+// ──────────────────────────────────────────────
+//  resolveSheetPaths
+// ──────────────────────────────────────────────
+function resolveSheetPaths(wbXml, relsXml, names) {
+  const nameRid = {};
+  for (const m of wbXml.matchAll(/<sheet\s[^>]*>/g)) {
+    const tag  = m[0];
+    const name = (tag.match(/name="([^"]*)"/) || [])[1];
+    const rid  = (tag.match(/r:id="([^"]*)"/) || [])[1];
+    if (name && rid) nameRid[name] = rid;
+  }
+  const ridTarget = {};
+  for (const m of relsXml.matchAll(/<Relationship\s[^>]*>/g)) {
+    const tag    = m[0];
+    const id     = (tag.match(/Id="([^"]*)"/)     || [])[1];
+    const target = (tag.match(/Target="([^"]*)"/) || [])[1];
+    if (id && target) ridTarget[id] = target;
+  }
+  const result = {};
+  for (const name of names) {
+    const rid = nameRid[name];
+    if (rid && ridTarget[rid]) result[name] = ridTarget[rid];
+  }
+  return result;
+}
+
+// ──────────────────────────────────────────────
+//  injectColumnA
+//  ─────────────────────────────────────────────
+//  Pure string-based XML surgery. We never parse
+//  or re-serialize the whole document — we only
+//  touch the exact bytes for column-A cells.
+// ──────────────────────────────────────────────
+function injectColumnA(xml, urls, startRow) {
+  if (!urls.length) return xml;
+
+  const SD_OPEN  = '<sheetData>';
+  const SD_EMPTY = '<sheetData/>';
+  const SD_CLOSE = '</sheetData>';
+
+  // ── Split into three zones ─────────────────
+  let pre, sdContent, post;
+  if (xml.includes(SD_EMPTY)) {
+    const idx = xml.indexOf(SD_EMPTY);
+    pre       = xml.slice(0, idx);
+    sdContent = '';
+    post      = xml.slice(idx + SD_EMPTY.length);
+  } else {
+    const s = xml.indexOf(SD_OPEN);
+    const e = xml.indexOf(SD_CLOSE);
+    if (s === -1 || e === -1) return xml;
+    pre       = xml.slice(0, s + SD_OPEN.length);
+    sdContent = xml.slice(s + SD_OPEN.length, e);
+    post      = xml.slice(e); // keeps </sheetData>
+  }
+
+  // ── Parse rows ─────────────────────────────
+  // Each entry: { num, attrStr, content, fullMatch }
+  const rows = [];
+  const rowRegex = /<row\s([^>]*)>([\s\S]*?)<\/row>/g;
+  let m;
+  while ((m = rowRegex.exec(sdContent)) !== null) {
+    const attrStr = m[1];
+    const content = m[2];
+    const rMatch  = attrStr.match(/\br="(\d+)"/);
+    if (!rMatch) continue;
+    rows.push({ num: parseInt(rMatch[1]), attrStr, content });
+  }
+
+  // Index by row number
+  const rowByNum = new Map(rows.map(r => [r.num, r]));
+  const maxExistingRow = rows.length ? Math.max(...rows.map(r => r.num)) : startRow - 1;
+
+  // ── Process URLs ────────────────────────────
+  for (let i = 0; i < urls.length; i++) {
+    const rowNum = startRow + i;
+    const ref    = 'A' + rowNum;
+    const val    = xmlEscape(urls[i]);
+    const cell   = makeInlineCell(ref, '', val); // style '' = no s attr (reuse from existing)
+
+    if (rowByNum.has(rowNum)) {
+      const row = rowByNum.get(rowNum);
+      // Try to find existing <c r="A{N}" …> — may be self-closing or with content
+      // Pattern: <c r="AN" …/> or <c r="AN" …>…</c>
+      const pattern = new RegExp(
+        '<c\\s[^>]*r="' + ref + '"[^>]*(?:/>|>[\\s\\S]*?</c>)'
+      );
+      const existMatch = row.content.match(pattern);
+      if (existMatch) {
+        // Preserve the original s="…" style attribute
+        const sMatch  = existMatch[0].match(/\bs="(\d+)"/);
+        const newCell = makeInlineCell(ref, sMatch ? sMatch[1] : '', val);
+        row.content   = row.content.replace(existMatch[0], newCell);
+      } else {
+        // No A cell — prepend one (A always sorts first)
+        row.content = makeInlineCell(ref, '', val) + row.content;
+      }
+    } else {
+      // Row doesn't exist — create it
+      const newRow = { num: rowNum, attrStr: 'r="' + rowNum + '" spans="1:1"', content: makeInlineCell(ref, '', val) };
+      rows.push(newRow);
+      rowByNum.set(rowNum, newRow);
+    }
+  }
+
+  // ── Reassemble ─────────────────────────────
+  rows.sort((a, b) => a.num - b.num);
+  const newSd = rows.map(r => '<row ' + r.attrStr + '>' + r.content + '</row>').join('');
+
+  // Update <dimension ref="…"/> (best-effort)
+  const lastRow = Math.max(maxExistingRow, startRow + urls.length - 1);
+  let result = pre + newSd + (sdContent === '' ? SD_CLOSE : '') + post;
+  result = result.replace(/<dimension ref="[^"]*"/, '<dimension ref="A1:Q' + lastRow + '"');
+
+  return result;
+}
+
+function makeInlineCell(ref, style, escapedValue) {
+  const sAttr = style ? ' s="' + style + '"' : '';
+  return '<c r="' + ref + '"' + sAttr + ' t="inlineStr"><is><t>' + escapedValue + '</t></is></c>';
+}
+
+function xmlEscape(s) {
+  return s
+    .replace(/&/g,  '&amp;')
+    .replace(/</g,  '&lt;')
+    .replace(/>/g,  '&gt;')
+    .replace(/"/g,  '&quot;')
+    .replace(/'/g,  '&apos;');
+}
+
+// ═══════════════════════════════════════════════
+//  UTILS
+// ═══════════════════════════════════════════════
+function parseURLs(text) {
+  return text.split('\n').map(u => u.trim()).filter(u => u.length > 0);
+}
+function splitBatches(urls, batchSize) {
+  if (!batchSize || batchSize <= 0) return [urls];
+  const out = [];
+  for (let i = 0; i < urls.length; i += batchSize) out.push(urls.slice(i, i + batchSize));
+  return out;
+}
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 8000);
+}
+function setProgress(pct, label) {
+  const wrap = document.getElementById('progress-wrap');
+  if (pct === 0 && !label) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  document.getElementById('prog-fill').style.width  = pct + '%';
+  document.getElementById('prog-label').textContent = label;
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.color = type === 'error' ? '#f87171' : type === 'success' ? '#34d399' : '';
+  t.className = 'toast glass rounded-xl px-5 py-3 text-sm font-semibold show';
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.classList.remove('show'), 3500);
+}
+</script>
+</body>
+</html>
