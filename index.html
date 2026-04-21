@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,6 +12,8 @@
 <title>Merge Template & Cutter</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- SheetJS for reading the URL source Excel -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
 
 <script>
@@ -118,6 +121,46 @@ tailwind.config = {
   ::-webkit-scrollbar { width:5px; }
   ::-webkit-scrollbar-track { background:rgba(255,255,255,0.02); }
   ::-webkit-scrollbar-thumb { background:rgba(45,212,191,0.2); border-radius:3px; }
+
+  /* Tab toggle */
+  .tab-btn {
+    flex:1; padding:8px 0; border-radius:10px; font-size:12px; font-weight:700;
+    letter-spacing:.04em; cursor:pointer; transition:all .2s;
+    border:none; background:transparent; color:rgba(148,163,184,0.6);
+  }
+  .tab-btn.active {
+    background:rgba(45,212,191,0.13);
+    color:#2dd4bf;
+    box-shadow: inset 0 0 0 1px rgba(45,212,191,0.25);
+  }
+  .tab-btn:hover:not(.active) { color:#94a3b8; background:rgba(45,212,191,0.05); }
+
+  .tab-toggle {
+    background:rgba(15,23,42,0.6);
+    border:1px solid rgba(45,212,191,0.12);
+    border-radius:12px; padding:4px; display:flex; gap:4px; margin-bottom:14px;
+  }
+
+  /* Excel drop zone for URL source */
+  .url-excel-drop {
+    border:2px dashed rgba(45,212,191,0.2);
+    border-radius:14px; padding:28px 20px;
+    text-align:center; cursor:pointer; transition:all .2s;
+  }
+  .url-excel-drop:hover, .url-excel-drop.dragover {
+    border-color:rgba(45,212,191,0.5); background:rgba(45,212,191,0.04);
+  }
+  .url-excel-drop.loaded {
+    border-color:rgba(45,212,191,0.45); border-style:solid;
+    background:rgba(45,212,191,0.05);
+  }
+
+  .source-badge {
+    display:inline-flex; align-items:center; gap:6px;
+    background:rgba(45,212,191,0.08); border:1px solid rgba(45,212,191,0.2);
+    border-radius:8px; padding:6px 12px; font-size:11px;
+    font-family:'DM Mono',monospace; color:#5eead4;
+  }
 </style>
 </head>
 <body class="bg-grid min-h-screen font-sans text-slate-200">
@@ -133,7 +176,7 @@ tailwind.config = {
       <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 flex items-center justify-center text-2xl shadow-lg" style="box-shadow:0 4px 20px rgba(20,184,166,0.35)">🔗</div>
       <div>
         <h1 class="text-[22px] font-extrabold tracking-tight text-white leading-tight">URL Batch Splitter</h1>
-        <p class="text-slate-400 text-sm mt-0.5">Paste URLs · Fill template · Download split Excel files</p>
+        <p class="text-slate-400 text-sm mt-0.5">Paste URLs or upload Excel · Fill template · Download split files</p>
       </div>
     </div>
     <div class="mt-4 flex flex-wrap gap-2.5">
@@ -165,13 +208,56 @@ tailwind.config = {
     <input type="file" id="tpl-input" accept=".xlsx" class="hidden"/>
 
     <!-- Step 2 -->
-    <div class="flex items-center justify-between mb-2">
-      <span class="slabel mb-0">Step 2 — Paste your URLs (one per line)</span>
+    <div class="flex items-center justify-between mb-3">
+      <span class="slabel mb-0">Step 2 — Provide your URLs</span>
       <span id="url-pill" class="url-pill hidden">0 URLs</span>
     </div>
-    <textarea id="urls"
-      class="w-full h-52 bg-slate-950/80 border border-slate-700/50 rounded-xl text-slate-300 font-mono text-xs p-4 resize-y leading-relaxed placeholder-slate-600"
-      placeholder="https://example.com/page-1&#10;https://another-site.com/article&#10;https://domain.org/path&#10;&#10;Supports 100,000+ URLs — one URL per line"></textarea>
+
+    <!-- Tab Toggle -->
+    <div class="tab-toggle">
+      <button class="tab-btn active" id="tab-paste" onclick="switchTab('paste')">
+        ✏️ &nbsp;Paste URLs
+      </button>
+      <button class="tab-btn" id="tab-excel" onclick="switchTab('excel')">
+        📊 &nbsp;Upload Excel (Col A)
+      </button>
+    </div>
+
+    <!-- Paste Tab -->
+    <div id="panel-paste">
+      <textarea id="urls"
+        class="w-full h-52 bg-slate-950/80 border border-slate-700/50 rounded-xl text-slate-300 font-mono text-xs p-4 resize-y leading-relaxed placeholder-slate-600"
+        placeholder="https://example.com/page-1&#10;https://another-site.com/article&#10;https://domain.org/path&#10;&#10;Supports 100,000+ URLs — one URL per line"></textarea>
+    </div>
+
+    <!-- Excel Upload Tab -->
+    <div id="panel-excel" class="hidden">
+      <div
+        id="url-excel-drop"
+        class="url-excel-drop"
+        onclick="document.getElementById('url-excel-input').click()"
+      >
+        <div id="url-excel-icon" class="text-4xl mb-3">📊</div>
+        <p class="text-sm font-bold text-slate-300 mb-1" id="url-excel-name">Click or drag &amp; drop your URLs Excel file</p>
+        <p class="text-xs text-slate-500">URLs must be in <span class="text-teal-400 font-mono">Column A</span> — any sheet, header row is skipped automatically if it doesn't look like a URL</p>
+
+        <!-- loaded state info -->
+        <div id="url-excel-info" class="hidden mt-4 flex flex-wrap gap-2 justify-center">
+          <span class="source-badge" id="url-excel-file-badge">—</span>
+          <span class="source-badge" id="url-excel-sheet-badge">—</span>
+          <span class="source-badge" id="url-excel-count-badge">—</span>
+        </div>
+      </div>
+      <input type="file" id="url-excel-input" accept=".xlsx,.xls,.csv" class="hidden"/>
+
+      <!-- Clear button -->
+      <div id="url-excel-clear-wrap" class="hidden mt-3 flex justify-end">
+        <button onclick="clearUrlExcel()" class="btn-sec rounded-lg px-4 py-2 text-xs font-semibold text-slate-400 flex items-center gap-2">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          Clear file
+        </button>
+      </div>
+    </div>
 
     <!-- Step 3 -->
     <div class="grid grid-cols-2 gap-4 mt-5">
@@ -252,10 +338,24 @@ tailwind.config = {
 // ═══════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════
-let templateAB = null;
+let templateAB      = null;
+let activeTab       = 'paste';   // 'paste' | 'excel'
+let excelURLs       = [];        // URLs loaded from uploaded Excel
 
 // ═══════════════════════════════════════════════
-//  TEMPLATE UPLOAD
+//  TAB SWITCHING
+// ═══════════════════════════════════════════════
+function switchTab(tab) {
+  activeTab = tab;
+  document.getElementById('tab-paste').classList.toggle('active', tab === 'paste');
+  document.getElementById('tab-excel').classList.toggle('active', tab === 'excel');
+  document.getElementById('panel-paste').classList.toggle('hidden', tab !== 'paste');
+  document.getElementById('panel-excel').classList.toggle('hidden', tab !== 'excel');
+  refreshURLPill();
+}
+
+// ═══════════════════════════════════════════════
+//  TEMPLATE UPLOAD (Step 1)
 // ═══════════════════════════════════════════════
 const dropZone = document.getElementById('drop-zone');
 document.getElementById('tpl-input').addEventListener('change', e => handleFile(e.target.files[0]));
@@ -283,23 +383,131 @@ function handleFile(file) {
 }
 
 // ═══════════════════════════════════════════════
-//  URL COUNTER
+//  URL EXCEL UPLOAD (Step 2 — Excel tab)
 // ═══════════════════════════════════════════════
-document.getElementById('urls').addEventListener('input', function() {
-  const urls = parseURLs(this.value);
+const urlExcelDrop = document.getElementById('url-excel-drop');
+document.getElementById('url-excel-input').addEventListener('change', e => handleURLExcel(e.target.files[0]));
+
+urlExcelDrop.addEventListener('dragover',  e => { e.preventDefault(); urlExcelDrop.classList.add('dragover'); });
+urlExcelDrop.addEventListener('dragleave', ()=> urlExcelDrop.classList.remove('dragover'));
+urlExcelDrop.addEventListener('drop', e => {
+  e.preventDefault(); urlExcelDrop.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if (f) handleURLExcel(f);
+  else showToast('No file dropped', 'error');
+});
+
+function handleURLExcel(file) {
+  if (!file) return;
+
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['xlsx','xls','csv'].includes(ext)) {
+    showToast('Please upload an .xlsx, .xls, or .csv file', 'error');
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb   = XLSX.read(data, { type:'array' });
+
+      // Use the first sheet
+      const sheetName = wb.SheetNames[0];
+      const ws        = wb.Sheets[sheetName];
+
+      // Get all values in column A
+      const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+      const raw   = [];
+      for (let r = range.s.r; r <= range.e.r; r++) {
+        const cell = ws[XLSX.utils.encode_cell({ r, c: 0 })];
+        if (cell && cell.v !== undefined && cell.v !== null && String(cell.v).trim() !== '') {
+          raw.push(String(cell.v).trim());
+        }
+      }
+
+      // Auto-skip header: if first row doesn't look like a URL, skip it
+      let urls = raw;
+      if (urls.length > 0 && !looksLikeURL(urls[0])) {
+        urls = urls.slice(1);
+      }
+
+      // Filter blanks
+      urls = urls.filter(u => u.length > 0);
+
+      if (!urls.length) {
+        showToast('No URLs found in Column A', 'error');
+        return;
+      }
+
+      excelURLs = urls;
+
+      // Update UI
+      urlExcelDrop.classList.add('loaded');
+      document.getElementById('url-excel-icon').textContent = '✅';
+      document.getElementById('url-excel-name').textContent = '✓  ' + file.name;
+
+      const info = document.getElementById('url-excel-info');
+      info.classList.remove('hidden');
+      document.getElementById('url-excel-file-badge').textContent  = '📄 ' + file.name;
+      document.getElementById('url-excel-sheet-badge').textContent = '📋 Sheet: ' + sheetName;
+      document.getElementById('url-excel-count-badge').textContent = '🔗 ' + urls.length.toLocaleString() + ' URLs';
+
+      document.getElementById('url-excel-clear-wrap').classList.remove('hidden');
+
+      refreshURLPill();
+      showToast('✅ Loaded ' + urls.length.toLocaleString() + ' URLs from ' + file.name, 'success');
+
+    } catch(err) {
+      showToast('❌ Could not read file: ' + err.message, 'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function looksLikeURL(str) {
+  return /^https?:\/\//i.test(str) || /^www\./i.test(str) || /\.[a-z]{2,}(\/|$)/i.test(str);
+}
+
+function clearUrlExcel() {
+  excelURLs = [];
+  urlExcelDrop.classList.remove('loaded');
+  document.getElementById('url-excel-icon').textContent = '📊';
+  document.getElementById('url-excel-name').textContent = 'Click or drag & drop your URLs Excel file';
+  document.getElementById('url-excel-info').classList.add('hidden');
+  document.getElementById('url-excel-clear-wrap').classList.add('hidden');
+  document.getElementById('url-excel-input').value = '';
+  refreshURLPill();
+  showToast('File cleared', 'info');
+}
+
+// ═══════════════════════════════════════════════
+//  URL COUNTER (Paste tab)
+// ═══════════════════════════════════════════════
+document.getElementById('urls').addEventListener('input', refreshURLPill);
+
+function refreshURLPill() {
+  const urls = getActiveURLs();
   const pill = document.getElementById('url-pill');
   if (urls.length) {
     pill.textContent = urls.length.toLocaleString() + ' URL' + (urls.length !== 1 ? 's' : '');
     pill.classList.remove('hidden');
-  } else { pill.classList.add('hidden'); }
-});
+  } else {
+    pill.classList.add('hidden');
+  }
+}
+
+function getActiveURLs() {
+  if (activeTab === 'excel') return excelURLs;
+  return parseURLs(document.getElementById('urls').value);
+}
 
 // ═══════════════════════════════════════════════
 //  PREVIEW
 // ═══════════════════════════════════════════════
 function previewBatches() {
-  const urls = parseURLs(document.getElementById('urls').value);
-  if (!urls.length) { showToast('Paste at least one URL first', 'error'); return; }
+  const urls = getActiveURLs();
+  if (!urls.length) { showToast('No URLs found — paste URLs or upload an Excel file first', 'error'); return; }
   const batchSize = parseInt(document.getElementById('batch-size').value) || 0;
   const batches   = splitBatches(urls, batchSize);
   const pad       = String(batches.length).length;
@@ -332,9 +540,9 @@ function previewBatches() {
 //  GENERATE
 // ═══════════════════════════════════════════════
 async function generateFiles() {
-  if (!templateAB) { showToast('Upload your Excel template first', 'error'); return; }
-  const urls = parseURLs(document.getElementById('urls').value);
-  if (!urls.length) { showToast('Paste at least one URL first', 'error'); return; }
+  if (!templateAB) { showToast('Upload your Excel template first (Step 1)', 'error'); return; }
+  const urls = getActiveURLs();
+  if (!urls.length) { showToast('No URLs found — paste URLs or upload an Excel file first', 'error'); return; }
 
   const batchSize = parseInt(document.getElementById('batch-size').value) || 0;
   const prefix    = (document.getElementById('file-prefix').value.trim() || 'output').replace(/[^a-zA-Z0-9_\-]/g,'_');
@@ -384,37 +592,25 @@ async function generateFiles() {
 
 // ═══════════════════════════════════════════════════════════════════
 //  CORE — fillTemplate
-//  ─────────────────────────────────────────────────────────────────
-//  Opens the .xlsx as a ZIP, reads the two target sheet XML files,
-//  surgically modifies ONLY the column-A cells using string ops,
-//  then repacks. Every other file in the ZIP is copied byte-for-byte.
-//  No SheetJS — no style stripping.
 // ═══════════════════════════════════════════════════════════════════
 async function fillTemplate(sourceAB, urls) {
-  const zip = await JSZip.loadAsync(sourceAB.slice(0)); // clone buffer
+  const zip = await JSZip.loadAsync(sourceAB.slice(0));
 
-  // Resolve sheet paths from workbook.xml + rels
   const wbXml   = await zip.file('xl/workbook.xml').async('string');
   const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
   const paths   = resolveSheetPaths(wbXml, relsXml, ['Category_review','Rawdata']);
 
-  // Category_review: URLs → col A starting at row 2
   const crPath = 'xl/' + (paths['Category_review'] || 'worksheets/sheet1.xml');
   zip.file(crPath, injectColumnA(await zip.file(crPath).async('string'), urls, 2));
 
-  // Rawdata: URLs → col A starting at row 1
   const rdPath = 'xl/' + (paths['Rawdata'] || 'worksheets/sheet4.xml');
   zip.file(rdPath, injectColumnA(await zip.file(rdPath).async('string'), urls, 1));
 
-  // Remove calcChain so Excel rebuilds formula order (safe, not needed)
   zip.remove('xl/calcChain.xml');
 
   return await zip.generateAsync({ type:'arraybuffer', compression:'DEFLATE', compressionOptions:{ level:5 } });
 }
 
-// ──────────────────────────────────────────────
-//  resolveSheetPaths
-// ──────────────────────────────────────────────
 function resolveSheetPaths(wbXml, relsXml, names) {
   const nameRid = {};
   for (const m of wbXml.matchAll(/<sheet\s[^>]*>/g)) {
@@ -438,13 +634,6 @@ function resolveSheetPaths(wbXml, relsXml, names) {
   return result;
 }
 
-// ──────────────────────────────────────────────
-//  injectColumnA
-//  ─────────────────────────────────────────────
-//  Pure string-based XML surgery. We never parse
-//  or re-serialize the whole document — we only
-//  touch the exact bytes for column-A cells.
-// ──────────────────────────────────────────────
 function injectColumnA(xml, urls, startRow) {
   if (!urls.length) return xml;
 
@@ -452,7 +641,6 @@ function injectColumnA(xml, urls, startRow) {
   const SD_EMPTY = '<sheetData/>';
   const SD_CLOSE = '</sheetData>';
 
-  // ── Split into three zones ─────────────────
   let pre, sdContent, post;
   if (xml.includes(SD_EMPTY)) {
     const idx = xml.indexOf(SD_EMPTY);
@@ -465,11 +653,9 @@ function injectColumnA(xml, urls, startRow) {
     if (s === -1 || e === -1) return xml;
     pre       = xml.slice(0, s + SD_OPEN.length);
     sdContent = xml.slice(s + SD_OPEN.length, e);
-    post      = xml.slice(e); // keeps </sheetData>
+    post      = xml.slice(e);
   }
 
-  // ── Parse rows ─────────────────────────────
-  // Each entry: { num, attrStr, content, fullMatch }
   const rows = [];
   const rowRegex = /<row\s([^>]*)>([\s\S]*?)<\/row>/g;
   let m;
@@ -481,47 +667,35 @@ function injectColumnA(xml, urls, startRow) {
     rows.push({ num: parseInt(rMatch[1]), attrStr, content });
   }
 
-  // Index by row number
   const rowByNum = new Map(rows.map(r => [r.num, r]));
   const maxExistingRow = rows.length ? Math.max(...rows.map(r => r.num)) : startRow - 1;
 
-  // ── Process URLs ────────────────────────────
   for (let i = 0; i < urls.length; i++) {
     const rowNum = startRow + i;
     const ref    = 'A' + rowNum;
     const val    = xmlEscape(urls[i]);
-    const cell   = makeInlineCell(ref, '', val); // style '' = no s attr (reuse from existing)
 
     if (rowByNum.has(rowNum)) {
       const row = rowByNum.get(rowNum);
-      // Try to find existing <c r="A{N}" …> — may be self-closing or with content
-      // Pattern: <c r="AN" …/> or <c r="AN" …>…</c>
-      const pattern = new RegExp(
-        '<c\\s[^>]*r="' + ref + '"[^>]*(?:/>|>[\\s\\S]*?</c>)'
-      );
+      const pattern = new RegExp('<c\\s[^>]*r="' + ref + '"[^>]*(?:/>|>[\\s\\S]*?</c>)');
       const existMatch = row.content.match(pattern);
       if (existMatch) {
-        // Preserve the original s="…" style attribute
         const sMatch  = existMatch[0].match(/\bs="(\d+)"/);
         const newCell = makeInlineCell(ref, sMatch ? sMatch[1] : '', val);
         row.content   = row.content.replace(existMatch[0], newCell);
       } else {
-        // No A cell — prepend one (A always sorts first)
         row.content = makeInlineCell(ref, '', val) + row.content;
       }
     } else {
-      // Row doesn't exist — create it
       const newRow = { num: rowNum, attrStr: 'r="' + rowNum + '" spans="1:1"', content: makeInlineCell(ref, '', val) };
       rows.push(newRow);
       rowByNum.set(rowNum, newRow);
     }
   }
 
-  // ── Reassemble ─────────────────────────────
   rows.sort((a, b) => a.num - b.num);
   const newSd = rows.map(r => '<row ' + r.attrStr + '>' + r.content + '</row>').join('');
 
-  // Update <dimension ref="…"/> (best-effort)
   const lastRow = Math.max(maxExistingRow, startRow + urls.length - 1);
   let result = pre + newSd + (sdContent === '' ? SD_CLOSE : '') + post;
   result = result.replace(/<dimension ref="[^"]*"/, '<dimension ref="A1:Q' + lastRow + '"');
@@ -572,7 +746,7 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function showToast(msg, type) {
   const t = document.getElementById('toast');
   t.textContent = msg;
-  t.style.color = type === 'error' ? '#f87171' : type === 'success' ? '#34d399' : '';
+  t.style.color = type === 'error' ? '#f87171' : type === 'success' ? '#34d399' : '#94a3b8';
   t.className = 'toast glass rounded-xl px-5 py-3 text-sm font-semibold show';
   clearTimeout(t._t);
   t._t = setTimeout(() => t.classList.remove('show'), 3500);
